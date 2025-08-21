@@ -66,7 +66,7 @@ struct decode_embd_batch {
     std::vector<int8_t>         logits;
     llama_batch batch;
     decode_embd_batch(float * embd, int32_t n_tokens, int n_pos_per_embd, int n_mmproj_embd) : n_pos_per_embd(n_pos_per_embd), n_mmproj_embd(n_mmproj_embd) {
-        pos     .resize(n_tokens * n_pos_per_embd);
+        pos     .resize(n_tokens * (n_pos_per_embd + 1));
         n_seq_id.resize(n_tokens);
         seq_ids .resize(n_tokens + 1);
         logits  .resize(n_tokens);
@@ -100,13 +100,14 @@ struct decode_embd_batch {
         for (int y = 0; y < ny; y++) {
             for (int x = 0; x < nx; x++) {
                 int i = y * nx + x;
-                pos[i                     ] = pos_0;
-                pos[i + batch.n_tokens    ] = pos_0 + y;
-                pos[i + batch.n_tokens * 2] = pos_0 + x;
-                pos[i + batch.n_tokens * 3] = 0; // last pos dim is unused
+                pos[i + batch.n_tokens    ] = pos_0;
+                pos[i + batch.n_tokens * 2] = pos_0 + y;
+                pos[i + batch.n_tokens * 3] = pos_0 + x;
+                pos[i + batch.n_tokens * 4] = 0; // last pos dim is unused
             }
         }
         for (int i = 0; i < batch.n_tokens; i++) {
+            batch.pos     [i] = pos_0 + i;
             batch.n_seq_id[i] = 1;
             batch.seq_id  [i] = seq_id_0.data();
             batch.logits  [i] = false;
@@ -118,12 +119,13 @@ struct decode_embd_batch {
         GGML_ASSERT(n_pos_per_embd == 4);
         seq_id_0[0] = seq_id;
         for (int i = 0; i < batch.n_tokens; i++) {
-            pos[i                     ] = pos_0 + i;
             pos[i + batch.n_tokens    ] = pos_0 + i;
             pos[i + batch.n_tokens * 2] = pos_0 + i;
-            pos[i + batch.n_tokens * 3] = 0; // last pos dim is unused
+            pos[i + batch.n_tokens * 3] = pos_0 + i;
+            pos[i + batch.n_tokens * 4] = 0; // last pos dim is unused
         }
         for (int i = 0; i < batch.n_tokens; i++) {
+            batch.pos     [i] = pos_0 + i;
             batch.n_seq_id[i] = 1;
             batch.seq_id  [i] = seq_id_0.data();
             batch.logits  [i] = false;
@@ -133,12 +135,12 @@ struct decode_embd_batch {
     llama_batch get_view(int offset, int n_tokens) {
         llama_pos * pos_ptr;
         pos_view.clear();
-        pos_view.reserve(n_tokens * n_pos_per_embd);
+        pos_view.reserve(n_tokens * (n_pos_per_embd + 1));
         if (n_pos_per_embd > 1) {
             // mrope
             // for example, with layout of src: 1234...1234...1234...1234...
             //       offset 2 will give us dst: 34...34...34...34...
-            for (int i = 0; i < n_pos_per_embd; i++) {
+            for (int i = 0; i <= n_pos_per_embd; i++) {
                 // assume n_tokens is less than or equal to batch.n_tokens
                 // batch.n_tokens is number of **total** tokens
                 // n_tokens is number of viewed token
