@@ -55,6 +55,11 @@ llama_pos mtmd_helper_get_n_pos(const mtmd_input_chunks * chunks) {
 
 // helper struct to make working with embd batch easier
 // note: this will be removed after llama_batch_ext refactoring
+// notes2: Normally, batch's `pos` stores linearly increasing position
+// However, some multi-modal models requires special position embedding (e.g. M-Rope in qwen2vl and qwen2.5vl)
+// But linearly increasing position is still needed for proper causal attention masking
+// So we store both of them: the first n_tokens elements are not changed, while model-specific positions are appended after that.
+// So `pos` has `n_tokens * (n_pos_per_embd + 1)` elements
 struct decode_embd_batch {
     int n_pos_per_embd;
     int n_mmproj_embd;
