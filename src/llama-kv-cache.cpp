@@ -870,6 +870,9 @@ void llama_kv_cache::apply_ubatch(const slot_info & sinfo, const llama_ubatch & 
 
     assert(ubatch.n_tokens == sinfo.n_stream()*sinfo.size());
 
+    ubatch.kv_position_of_token.clear();//clear first, to ensure that all values will be filled with -1
+    ubatch.kv_position_of_token.resize(ubatch.n_tokens, -1);
+
     for (uint32_t s = 0; s < sinfo.n_stream(); ++s) {
         for (uint32_t ii = 0; ii < sinfo.size(); ++ii) {
             const uint32_t i = s*sinfo.size() + ii;
@@ -890,7 +893,7 @@ void llama_kv_cache::apply_ubatch(const slot_info & sinfo, const llama_ubatch & 
             }
 
             cells.pos_set(idx, ubatch.pos[i]);
-            ubatch.kv_cache_position_to_batch_position[idx] = i;
+            ubatch.kv_position_of_token[i] = (int32_t)idx;
 
             for (int32_t s = 0; s < ubatch.n_seq_id[i]; s++) {
                 cells.seq_add(idx, ubatch.seq_id[i][s]);
@@ -1211,6 +1214,12 @@ void llama_kv_cache::set_input_kq_mask(ggml_tensor * dst, const llama_ubatch * u
 
     std::fill(data, data + ggml_nelements(dst), -INFINITY);
 
+    std::vector<int32_t> map_kv_to_batch(n_kv, -1);
+    for (size_t i = 0; i < ubatch->kv_position_of_token.size(); ++i)//invert the batch -> kv position map into a kv -> batch position map
+    {
+        if (ubatch->kv_position_of_token[i] != -1)
+            map_kv_to_batch[ubatch->kv_position_of_token[i]] = i;
+    }
     // Use only the previous KV cells of the correct sequence for each token of the ubatch.
     // It's assumed that if a token in the batch has multiple sequences, they are equivalent.
     // Example with a cache of 10 tokens, 2 tokens populated in cache and 3 tokens in batch:
@@ -1250,17 +1259,10 @@ void llama_kv_cache::set_input_kq_mask(ggml_tensor * dst, const llama_ubatch * u
                     const llama_pos p0 = cells.pos_get(j);
 
                     // mask future tokens
-                    //if (causal_attn && p0 > p1) {
-                    //    continue;
-                    //}
                     if (causal_attn)
                     {
-                        auto tok_pos_in_batch = ubatch->kv_cache_position_to_batch_position.find(j);
-                        if (tok_pos_in_batch != ubatch->kv_cache_position_to_batch_position.end())//this kv cell corresponds to a location in the ubatch
-                        {
-                            if (tok_pos_in_batch->second > (int32_t)i)
-                                continue;
-                        }
+                        if (map_kv_to_batch[j] != -1 && map_kv_to_batch[j] > (int32_t)i)//if the kv cache token is in the current batch AND its position in the batch is higher than i
+                            continue;
                     }
 
                     // apply SWA if any
@@ -1273,16 +1275,6 @@ void llama_kv_cache::set_input_kq_mask(ggml_tensor * dst, const llama_ubatch * u
             }
         }
     }
-    //printf("\n\n\n\n");
-    //printf("self_kq_mask.shape %lld, %lld\n", dst->ne[0], dst->ne[1]);
-    //printf("n_tokens: %lld, n_kv: %lld\n", n_tokens, n_kv);
-    //for (int row = 0; row < dst->ne[1]; row++) {
-    //    for (int i = 0; i < 100; i++) {
-    //        printf(data[row * dst->ne[0] + i] == 0.0f ? "x" : ".");
-    //    }
-    //    printf("\n");
-    //}
-    //printf("\n\n\n\n"); // GGML_ABORT("test");
 }
 
 void llama_kv_cache::set_input_pos_bucket(ggml_tensor * dst, const llama_ubatch * ubatch) const {
