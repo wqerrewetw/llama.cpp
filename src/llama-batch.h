@@ -53,6 +53,7 @@ struct llama_ubatch {
 
     // the llama_ubatch pointers above point to this data if set. otherwise - points to non-owning data
     std::shared_ptr<data_t> data;
+    mutable std::unordered_map<int32_t, int32_t> kv_cache_position_to_batch_position;//when pushed to the kv cache, where is it pushed
 };
 
 // a helper for sanitizing, fulfilling and splitting a batch
