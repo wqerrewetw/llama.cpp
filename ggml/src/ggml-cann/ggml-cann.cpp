@@ -75,13 +75,12 @@
  * @param device The device ID to set.
  */
 void ggml_cann_set_device(const int32_t device) {
-    // TODO: uncomment these lines after empty context has fixed.
-    // int current_device;
-    // ACL_CHECK(aclrtGetDevice(&current_device));
+    int current_device = -1;
+    aclrtGetDevice(&current_device);
 
-    // if (device == current_device) {
-    //   return;
-    // }
+    if (device == current_device) {
+      return;
+    }
     ACL_CHECK(aclrtSetDevice(device));
 }
 
@@ -2187,7 +2186,15 @@ static void add_lru_matched_graph_node_properties(
         std::copy_n(node->nb, GGML_MAX_DIMS, prop.nb);
 
         for (int src = 0; src < GGML_MAX_SRC; ++src) {
-            prop.src_address[src] = node->src[src] ? node->src[src]->data : nullptr;
+            if (node->src[src]) {
+                prop.src_address[src] = node->src[src]->data;
+                std::copy_n(node->src[src]->ne, GGML_MAX_DIMS, prop.src_ne[src]);
+                std::copy_n(node->src[src]->nb, GGML_MAX_DIMS, prop.src_nb[src]);
+            } else {
+                prop.src_address[src] = nullptr;
+                std::fill_n(prop.src_ne[src], GGML_MAX_DIMS, 0);
+                std::fill_n(prop.src_nb[src], GGML_MAX_DIMS, 0);
+            }
         }
 
         memcpy(prop.op_params, node->op_params, GGML_MAX_OP_PARAMS);
@@ -2207,14 +2214,18 @@ static void add_lru_matched_graph_node_properties(
  * @param graph_node_properties The stored properties of a CANN graph node.
  * @return true if all fields match (excluding GGML_OP_VIEW); false otherwise.
  */
-static bool ggml_graph_node_has_matching_properties(ggml_tensor * node, ggml_graph_node_properties * graph_node_properties) {
+static bool ggml_graph_node_has_matching_properties(
+        ggml_tensor * node,
+        ggml_graph_node_properties * graph_node_properties) {
     if (node->data != graph_node_properties->node_address &&
-           node->op != GGML_OP_VIEW) {
+            node->op != GGML_OP_VIEW) {
         return false;
     }
+
     if (node->op != graph_node_properties->node_op) {
         return false;
     }
+
     for (int i = 0; i < GGML_MAX_DIMS; i++) {
         if (node->ne[i] != graph_node_properties->ne[i]) {
             return false;
@@ -2223,17 +2234,31 @@ static bool ggml_graph_node_has_matching_properties(ggml_tensor * node, ggml_gra
             return false;
         }
     }
+
     for (int i = 0; i < GGML_MAX_SRC; i++) {
-        if (node->src[i] &&
-            node->src[i]->data != graph_node_properties->src_address[i] &&
-            node->op != GGML_OP_VIEW
-        ) {
-            return false;
+        if (node->src[i]) {
+            if (node->src[i]->data != graph_node_properties->src_address[i] &&
+                node->op != GGML_OP_VIEW) {
+                return false;
+            }
+
+            for (int d = 0; d < GGML_MAX_DIMS; d++) {
+                if (node->src[i]->ne[d] != graph_node_properties->src_ne[i][d]) {
+                    return false;
+                }
+                if (node->src[i]->nb[d] != graph_node_properties->src_nb[i][d]) {
+                    return false;
+                }
+            }
+        } else {
+            if (graph_node_properties->src_address[i] != nullptr) {
+                return false;
+            }
         }
     }
-    if (node->op == GGML_OP_SCALE &&
-        memcmp(graph_node_properties->op_params, node->op_params, GGML_MAX_OP_PARAMS) != 0) {
-        return false;
+
+    if (node->op == GGML_OP_SCALE || node->op == GGML_OP_UNARY || node->op == GGML_OP_GLU) {
+        return memcmp(graph_node_properties->op_params, node->op_params, GGML_MAX_OP_PARAMS) == 0;
     }
     return true;
 }
@@ -2353,9 +2378,27 @@ static enum ggml_status ggml_backend_cann_graph_compute(
     ggml_cann_set_device(cann_ctx->device);
     g_nz_workspaces[cann_ctx->device].clear();
 
+    // calculate rope cache for fist layer in current device.
+    cann_ctx->rope_cache.cached = false;
+
 #ifdef USE_ACL_GRAPH
     bool use_cann_graph = true;
     bool cann_graph_update_required = false;
+
+    static bool prefill_use_graph = parse_bool(get_env("GGML_CANN_PREFILL_USE_GRAPH").value_or(""));
+    if (!prefill_use_graph) {
+        // Do not use acl_graph for prefill.
+        for (int i = 0; i < cgraph->n_nodes; i++) {
+            ggml_tensor * node = cgraph->nodes[i];
+            // TODO: Optimize here. Currently, we can only
+            // get seq_len by FA's input.
+            if (node->op == GGML_OP_FLASH_ATTN_EXT) {
+                // Q -> src[0], shape: [B, S, N, D]
+                use_cann_graph = (node->src[0]->ne[1] == 1);
+                break;
+            }
+        }
+    }
 
     if (!cann_ctx->acl_graph_mode) {
         use_cann_graph = false;
@@ -2739,7 +2782,7 @@ static const ggml_backend_i ggml_backend_cann_interface = {
     /* .graph_compute           = */ ggml_backend_cann_graph_compute,
     /* .event_record            = */ ggml_backend_cann_event_record,
     /* .event_wait              = */ ggml_backend_cann_event_wait,
-    /* .optimize_graph          = */ NULL,
+    /* .graph_optimize          = */ NULL,
 };
 
 /**

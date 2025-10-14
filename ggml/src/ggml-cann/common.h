@@ -341,11 +341,18 @@ private:
 
 #ifdef USE_ACL_GRAPH
 struct ggml_graph_node_properties {
+    // dst tensor
     void * node_address;
-    ggml_op node_op;
     int64_t ne[GGML_MAX_DIMS];
     size_t nb[GGML_MAX_DIMS];
+
+    // src tensor
     void * src_address[GGML_MAX_SRC];
+    int64_t src_ne[GGML_MAX_SRC][GGML_MAX_DIMS];
+    size_t  src_nb[GGML_MAX_SRC][GGML_MAX_DIMS];
+
+    // op
+    ggml_op node_op;
     int32_t op_params[GGML_MAX_OP_PARAMS / sizeof(int32_t)];
 };
 
@@ -425,12 +432,27 @@ struct ggml_cann_rope_cache {
         if(theta_scale_cache != nullptr) {
             ACL_CHECK(aclrtFree(theta_scale_cache));
         }
+        if(sin_cache != nullptr) {
+            ACL_CHECK(aclrtFree(sin_cache));
+        }
+        if(cos_cache != nullptr) {
+            ACL_CHECK(aclrtFree(cos_cache));
+        }
     }
 
     void* theta_scale_cache = nullptr;
     int64_t theta_scale_length = 0;
+    // sin/cos cache, used only to accelerate first layer on each device
+    void* sin_cache = nullptr;
+    void* cos_cache = nullptr;
+    int64_t position_length = 0;
+    // Properties to check before reusing the sincos cache
+    bool cached = false;
+    float ext_factor = 0.0f;
     float theta_scale = 0.0f;
     float freq_scale = 0.0f;
+    float attn_factor = 0.0f;
+    bool is_neox = false;
 };
 
 struct ggml_cann_tensor_cache {
@@ -511,7 +533,10 @@ struct ggml_backend_cann_context {
      */
     aclrtStream stream(int stream) {
         if (streams[stream] == nullptr) {
-            ggml_cann_set_device(device);
+            // If the device is not set here, destroying the stream later may cause a mismatch
+            // between the thread contexts where the stream was created and destroyed.
+            // However, I printed the device_id, thread_id, and stream, and they are all consistent.
+            ACL_CHECK(aclrtSetDevice(device));
             ACL_CHECK(aclrtCreateStream(&streams[stream]));
         }
         return streams[stream];

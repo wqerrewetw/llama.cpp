@@ -224,7 +224,13 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
                 foreach(feature DOTPROD SVE MATMUL_INT8 FMA FP16_VECTOR_ARITHMETIC SME)
                     string(FIND "${ARM_FEATURE}" "__ARM_FEATURE_${feature} 1" feature_pos)
                     if (NOT ${feature_pos} EQUAL -1)
-                        message(STATUS "ARM feature ${feature} enabled")
+                        # Special handling for MATMUL_INT8 when machine doesn't support i8mm
+                        if ("${feature}" STREQUAL "MATMUL_INT8" AND GGML_MACHINE_SUPPORTS_noi8mm)
+                            message(STATUS "ARM feature ${feature} detected but unsetting due to machine not supporting i8mm")
+                            list(APPEND ARCH_FLAGS -U__ARM_FEATURE_MATMUL_INT8)
+                        else()
+                            message(STATUS "ARM feature ${feature} enabled")
+                        endif()
                     endif()
                 endforeach()
             endif()
@@ -433,6 +439,15 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
             ggml-cpu/arch/riscv/quants.c
             ggml-cpu/arch/riscv/repack.cpp
             )
+        if (GGML_CPU_RISCV64_SPACEMIT)
+            target_compile_definitions(${GGML_CPU_NAME} PRIVATE GGML_USE_CPU_RISCV64_SPACEMIT ${RISCV64_SPACEMIT_IME_SPEC})
+            list(APPEND GGML_CPU_SOURCES
+                ggml-cpu/spacemit/ime.cpp
+                ggml-cpu/spacemit/ime.h
+                ggml-cpu/spacemit/ime1_kernels.cpp
+                ggml-cpu/spacemit/ime_kernels.h
+            )
+        endif()
         set(MARCH_STR "rv64gc")
         if (GGML_RV_ZFH)
             string(APPEND MARCH_STR "_zfh")
@@ -498,9 +513,9 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
 
         # Fetch KleidiAI sources:
         include(FetchContent)
-        set(KLEIDIAI_COMMIT_TAG "v1.13.0")
+        set(KLEIDIAI_COMMIT_TAG "v1.14.0")
         set(KLEIDIAI_DOWNLOAD_URL "https://github.com/ARM-software/kleidiai/archive/refs/tags/${KLEIDIAI_COMMIT_TAG}.tar.gz")
-        set(KLEIDIAI_ARCHIVE_MD5  "d82a8de939d9814621a5ba23907bdac1")
+        set(KLEIDIAI_ARCHIVE_MD5  "45e110675d93f99f82c23a1afcca76bc")
 
         if (POLICY CMP0135)
             cmake_policy(SET CMP0135 NEW)
@@ -577,6 +592,7 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
                 ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qsi8d32p_qsi4c32p/kai_matmul_clamp_f32_qsi8d32p1vlx4_qsi4c32p4vlx4_1vlx4vl_sme2_mopa.c
                 ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qsi8d32p_qsi4c32p/kai_matmul_clamp_f32_qsi8d32p1x4_qsi4c32p4vlx4_1x4vl_sme2_sdot.c
                 ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_fp32_bf16p_bf16p/kai_matmul_clamp_f32_bf16p2vlx2_bf16p2vlx2_2vlx2vl_sme2_mopa.c
+                ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_fp32_bf16p_bf16p/kai_matmul_clamp_f32_bf16p2vlx2_bf16p2vlx2_2vlx2vl_sme2_mopa_asm.S
                 ${KLEIDIAI_SRC}/kai/ukernels/matmul/pack/kai_lhs_pack_bf16p2vlx2_f32_sme.c
                 ${KLEIDIAI_SRC}/kai/ukernels/matmul/pack/kai_rhs_pack_kxn_bf16p2vlx2b_f32_x32_sme.c
                 ${KLEIDIAI_SRC}/kai/kai_common_sme_asm.S)
