@@ -53,6 +53,7 @@ struct llama_ubatch {
 
     // the llama_ubatch pointers above point to this data if set. otherwise - points to non-owning data
     std::shared_ptr<data_t> data;
+    mutable std::vector<int32_t> kv_position_of_token;//when pushed to the kv cache, where is the token pushed (used for causal masking)
 };
 
 // a helper for sanitizing, fulfilling and splitting a batch
