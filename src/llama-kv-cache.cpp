@@ -875,9 +875,6 @@ void llama_kv_cache::apply_ubatch(const slot_info & sinfo, const llama_ubatch & 
 
     assert(ubatch.n_tokens == sinfo.n_stream()*sinfo.size());
 
-    ubatch.kv_position_of_token.clear();//clear first, to ensure that all values will be filled with -1
-    ubatch.kv_position_of_token.resize(ubatch.n_tokens, -1);
-
     for (uint32_t s = 0; s < sinfo.n_stream(); ++s) {
         for (uint32_t ii = 0; ii < sinfo.size(); ++ii) {
             const uint32_t i = s*sinfo.size() + ii;
@@ -898,7 +895,7 @@ void llama_kv_cache::apply_ubatch(const slot_info & sinfo, const llama_ubatch & 
             }
 
             cells.pos_set(idx, ubatch.pos[i]);
-            ubatch.kv_position_of_token[i] = (int32_t)idx;
+            ubatch.kv_position_of_token[i] = (int32_t)idx;//set the position in the kv cache as a property for this token (needed for proper causal masking)
 
             for (int32_t s = 0; s < ubatch.n_seq_id[i]; s++) {
                 cells.seq_add(idx, ubatch.seq_id[i][s]);
@@ -1219,8 +1216,8 @@ void llama_kv_cache::set_input_kq_mask(ggml_tensor * dst, const llama_ubatch * u
 
     std::fill(data, data + ggml_nelements(dst), -INFINITY);
 
-    std::vector<int32_t> map_kv_to_batch(n_kv, -1);
-    for (size_t i = 0; i < ubatch->kv_position_of_token.size(); ++i)//invert the batch -> kv position map into a kv -> batch position map
+    std::vector<int32_t> map_kv_to_batch(n_kv, -1);//for each token in the cache, either (-1) or the position in the current ubatch
+    for (uint32_t i = 0; i < n_tokens; ++i)//invert the batch -> kv position map into a kv -> batch position map
     {
         if (ubatch->kv_position_of_token[i] != -1)
             map_kv_to_batch[ubatch->kv_position_of_token[i]] = i;
