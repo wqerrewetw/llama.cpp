@@ -21,61 +21,7 @@ env:
   CMAKE_ARGS: "-DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_TOOLS=ON -DLLAMA_BUILD_SERVER=ON -DGGML_RPC=ON"
 
 jobs:
-  macOS-arm64:
-    runs-on: macos-14
-
-    steps:
-      - name: Clone
-        id: checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: ccache
-        uses: ggml-org/ccache-action@v1.2.16
-        with:
-          key: macOS-latest-cmake-arm64
-          evict-old-files: 1d
-
-      - name: Dependencies
-        id: depends
-        continue-on-error: true
-        run: |
-          brew update
-          brew install curl
-
-      - name: Build
-        id: cmake_build
-        run: |
-          sysctl -a
-          cmake -B build \
-            -DCMAKE_INSTALL_RPATH='@loader_path' \
-            -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
-            -DLLAMA_FATAL_WARNINGS=ON \
-            -DGGML_METAL_USE_BF16=ON \
-            -DGGML_METAL_EMBED_LIBRARY=ON \
-            -DGGML_RPC=ON \
-            ${{ env.CMAKE_ARGS }}
-          cmake --build build --config Release -j $(sysctl -n hw.logicalcpu)
-
-      - name: Determine tag name
-        id: tag
-        uses: ./.github/actions/get-tag-name
-
-      - name: Pack artifacts
-        id: pack_artifacts
-        run: |
-          cp LICENSE ./build/bin/
-          zip -r llama-${{ steps.tag.outputs.name }}-bin-macos-arm64.zip ./build/bin/*
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          path: llama-${{ steps.tag.outputs.name }}-bin-macos-arm64.zip
-          name: llama-bin-macos-arm64.zip
-
- 
-
+  
   windows-cpu:
     runs-on: windows-2025
 
